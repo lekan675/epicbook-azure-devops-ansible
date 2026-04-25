@@ -4,11 +4,12 @@ app_repo:  "https://github.com/pravinmishraaws/theepicbook"
 app_dest:  "/var/www/epicbook"
 app_user:  "www-data"
 app_group: "www-data"
-
+ 
 # ── Nginx ─────────────────────────────────────────────────────────────────────
 nginx_site_name: "epicbook"
 nginx_port:      80
-
+backend_port:    8080
+ 
 # ── Database — values injected at runtime via pipeline --extra-vars ───────────
 # Do NOT put real credentials here. The pipeline passes these via --extra-vars:
 #   db_host       from variable group: mysql_fqdn
@@ -19,4 +20,4 @@ db_name:     "bookstore"
 db_user:     "placeholder"
 db_password: "placeholder"
 db_port:     3306
-
+ 
