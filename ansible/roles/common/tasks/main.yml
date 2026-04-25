@@ -20,6 +20,12 @@
       - python3-pip
     state: present
 
+- name: Install PyMySQL on target VM
+  ansible.builtin.pip:
+    name: PyMySQL
+    state: present
+    executable: pip3
+
 # Install Node.js 18 via NodeSource
 - name: Download NodeSource setup script
   ansible.builtin.shell:
