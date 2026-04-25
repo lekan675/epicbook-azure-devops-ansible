@@ -4,7 +4,7 @@
   ansible.builtin.stat:
     path: "{{ app_dest }}/.git"
   register: git_dir
-  force: true        
+  
 
 - name: Remove stale destination directory if not a valid git repo
   ansible.builtin.file:
@@ -30,6 +30,7 @@
     repo: "{{ app_repo }}"
     dest: "{{ app_dest }}"
     version: main
+    force: true
   notify: Reload nginx
 
 # ── Deploy database config pointing to Azure MySQL Flexible Server ────────────
