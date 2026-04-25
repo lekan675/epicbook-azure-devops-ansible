@@ -1,0 +1,123 @@
+---
+# ── Clone EpicBook repository ─────────────────────────────────────────────────
+- name: Check if app_dest is a valid git repo
+  ansible.builtin.stat:
+    path: "{{ app_dest }}/.git"
+  register: git_dir
+
+- name: Remove stale destination directory if not a valid git repo
+  ansible.builtin.file:
+    path: "{{ app_dest }}"
+    state: absent
+  when: not git_dir.stat.exists
+
+- name: Ensure app destination directory exists
+  ansible.builtin.file:
+    path: "{{ app_dest }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Mark app_dest as safe for git
+  ansible.builtin.command:
+    cmd: git config --global --add safe.directory {{ app_dest }}
+  changed_when: false
+
+- name: Clone EpicBook repository
+  ansible.builtin.git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_dest }}"
+    version: main
+  notify: Reload nginx
+
+# ── Deploy database config pointing to Azure MySQL Flexible Server ────────────
+# This overwrites the repo's config/config.json with the correct Azure DB values
+- name: Deploy database config for Azure MySQL Flexible Server
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ app_dest }}/config/config.json"
+    owner: root
+    group: root
+    mode: '0640'
+
+# ── Install npm dependencies ──────────────────────────────────────────────────
+- name: Install npm dependencies
+  ansible.builtin.command:
+    cmd: npm install
+    chdir: "{{ app_dest }}"
+  changed_when: false
+
+# ── Set ownership ─────────────────────────────────────────────────────────────
+- name: Set ownership of app files
+  ansible.builtin.file:
+    path: "{{ app_dest }}"
+    state: directory
+    recurse: true
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+
+# ── Seed the Azure MySQL database ─────────────────────────────────────────────
+# Azure MySQL Flexible Server — connect via FQDN on port 3306
+- name: Create bookstore database on Azure MySQL
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: present
+    login_host: "{{ db_host }}"
+    login_port: 3306
+    login_user: "{{ db_user }}"
+    login_password: "{{ db_password }}"
+
+- name: Import schema into Azure MySQL
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: import
+    target: "{{ app_dest }}/db/BuyTheBook_Schema.sql"
+    login_host: "{{ db_host }}"
+    login_port: 3306
+    login_user: "{{ db_user }}"
+    login_password: "{{ db_password }}"
+
+- name: Import author seed data into Azure MySQL
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: import
+    target: "{{ app_dest }}/db/author_seed.sql"
+    login_host: "{{ db_host }}"
+    login_port: 3306
+    login_user: "{{ db_user }}"
+    login_password: "{{ db_password }}"
+
+- name: Import books seed data into Azure MySQL
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: import
+    target: "{{ app_dest }}/db/books_seed.sql"
+    login_host: "{{ db_host }}"
+    login_port: 3306
+    login_user: "{{ db_user }}"
+    login_password: "{{ db_password }}"
+
+# ── Start EpicBook with PM2 ───────────────────────────────────────────────────
+- name: Stop existing PM2 epicbook process if running
+  ansible.builtin.command:
+    cmd: pm2 delete epicbook
+  failed_when: false
+  changed_when: false
+
+- name: Start EpicBook app with PM2
+  ansible.builtin.command:
+    cmd: pm2 start server.js --name epicbook
+    chdir: "{{ app_dest }}"
+  environment:
+    NODE_ENV: development
+
+- name: Save PM2 process list
+  ansible.builtin.command:
+    cmd: pm2 save
+  changed_when: false
+
+- name: Set PM2 to start on boot
+  ansible.builtin.command:
+    cmd: pm2 startup systemd -u root --hp /root
+  changed_when: false

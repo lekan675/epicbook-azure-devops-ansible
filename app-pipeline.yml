@@ -1,0 +1,112 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: 'SelfHostedPool'             # update to your agent pool name
+
+variables:
+  - group: epicbook-secrets          # variable group — must contain: db_password, vm_public_ip, mysql_fqdn
+  - name: ansibleDir
+    value: '$(Build.SourcesDirectory)/ansible'
+
+steps:
+
+  # ── Checkout App repo (contains ansible/ folder) ──────────────────────────
+  - checkout: self
+    displayName: 'Checkout App Repository'
+
+  # ── Download SSH private key from Secure Files ────────────────────────────
+  - task: DownloadSecureFile@1
+    name: sshPrivateKey
+    displayName: 'Download SSH Private Key'
+    inputs:
+      secureFile: 'id_rsa'
+
+  # ── Install SSH private key on agent ──────────────────────────────────────
+  - script: |
+      mkdir -p ~/.ssh
+      cp "$(sshPrivateKey.secureFilePath)" ~/.ssh/id_rsa
+      chmod 600 ~/.ssh/id_rsa
+      echo "SSH private key installed."
+      ls -l ~/.ssh/
+    displayName: 'Install SSH Private Key'
+
+  # ── Install Ansible and required collections ──────────────────────────────
+  - script: |
+      set -e
+      sudo apt-get update -y
+      sudo apt-get install -y ansible python3-pip
+      pip3 install --break-system-packages PyMySQL
+      ansible-galaxy collection install community.general community.mysql
+      ansible --version
+    displayName: 'Install Ansible and Dependencies'
+
+  # ── Inject Terraform outputs into inventory.ini ───────────────────────────
+  # vm_public_ip and mysql_fqdn come from the epicbook-secrets variable group
+  # These were manually copied from the infra pipeline Terraform outputs
+  - script: |
+      set -e
+      cd $(ansibleDir)
+
+      echo "Updating inventory.ini with VM public IP: $(vm_public_ip)"
+      sed -i "s|<VM_PUBLIC_IP>|$(vm_public_ip)|g" inventory.ini
+
+      echo "Updated inventory.ini:"
+      cat inventory.ini
+    displayName: 'Inject VM Public IP into inventory.ini'
+
+  # ── Inject MySQL FQDN and DB password into group_vars/web.yml ─────────────
+  - script: |
+      set -e
+      cd $(ansibleDir)
+
+      echo "Updating group_vars/web.yml with MySQL FQDN: $(mysql_fqdn)"
+      sed -i "s|<MYSQL_FQDN>|$(mysql_fqdn)|g" group_vars/web.yml
+      sed -i "s|<DB_PASSWORD>|$(db_password)|g" group_vars/web.yml
+
+      echo "Updated group_vars/web.yml:"
+      # Print without exposing db_password
+      grep -v db_password group_vars/web.yml
+    displayName: 'Inject MySQL FQDN and DB Password into group_vars'
+
+  # ── Test SSH connectivity to the VM ───────────────────────────────────────
+  - script: |
+      set -e
+      cd $(ansibleDir)
+      ansible web -i inventory.ini -m ping
+    displayName: 'Test SSH Connectivity to VM'
+
+  # ── Run Ansible Playbook ───────────────────────────────────────────────────
+  - script: |
+      set -e
+      cd $(ansibleDir)
+      ansible-playbook -i inventory.ini site.yml -v
+    displayName: 'Run Ansible Playbook (common → nginx → epicbook)'
+
+  # ── Verify Nginx is serving the EpicBook site ─────────────────────────────
+  - script: |
+      set -e
+      echo "Waiting 15 seconds for Nginx and PM2 to fully start..."
+      sleep 15
+
+      HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://$(vm_public_ip))
+      echo "HTTP status: $HTTP_STATUS"
+
+      if [ "$HTTP_STATUS" = "200" ]; then
+        echo "EpicBook is live at http://$(vm_public_ip)"
+      else
+        echo "EpicBook returned HTTP $HTTP_STATUS — check Nginx and PM2 logs"
+        exit 1
+      fi
+    displayName: 'Verify EpicBook HTTP Response'
+
+  # ── Print access details ───────────────────────────────────────────────────
+  - script: |
+      echo "==========================================="
+      echo "  EpicBook Deployment Complete"
+      echo "  App URL    : http://$(vm_public_ip)"
+      echo "  MySQL Host : $(mysql_fqdn)"
+      echo "==========================================="
+    displayName: 'Print Deployment Summary'

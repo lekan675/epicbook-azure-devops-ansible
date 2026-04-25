@@ -1,0 +1,18 @@
+---
+# ── Application ──────────────────────────────────────────────────────────────
+app_repo:  "https://github.com/pravinmishraaws/theepicbook"
+app_dest:  "/var/www/epicbook"
+app_user:  "www-data"
+app_group: "www-data"
+
+# ── Nginx ─────────────────────────────────────────────────────────────────────
+nginx_site_name: "epicbook"
+nginx_port:      80
+backend_port:    8080
+
+# ── Database — Azure MySQL Flexible Server ────────────────────────────────────
+# Update db_host with the value from Terraform output: mysql_fqdn
+db_host:     "<MYSQL_FQDN>"
+db_name:     "bookstore"
+db_user:     "dbadmin"
+db_password: "<DB_PASSWORD>"      # injected by pipeline from variable group
