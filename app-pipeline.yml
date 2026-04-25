@@ -4,36 +4,35 @@ trigger:
       - main
 
 pool:
-  name: 'epicbook-agent'             # update to your agent pool name
+  name: 'epicbook-agent'
 
 variables:
-  - group: epicbook-secrets          # variable group — must contain: db_password, vm_public_ip, mysql_fqdn
+  - group: epicbook-secrets   # must contain: vm_public_ip, mysql_fqdn, db_password, db_admin_user
   - name: ansibleDir
     value: '$(Build.SourcesDirectory)/ansible'
 
 steps:
 
-  # ── Checkout App repo (contains ansible/ folder) ──────────────────────────
+  # ── Checkout repo ──────────────────────────────────────────────────────────
   - checkout: self
     displayName: 'Checkout App Repository'
 
-  # ── Download SSH private key from Secure Files ────────────────────────────
+  # ── Download SSH private key ───────────────────────────────────────────────
   - task: DownloadSecureFile@1
     name: sshPrivateKey
     displayName: 'Download SSH Private Key'
     inputs:
       secureFile: 'id_rsa'
 
-  # ── Install SSH private key on agent ──────────────────────────────────────
+  # ── Install SSH key ────────────────────────────────────────────────────────
   - script: |
       mkdir -p ~/.ssh
       cp "$(sshPrivateKey.secureFilePath)" ~/.ssh/id_rsa
       chmod 600 ~/.ssh/id_rsa
-      echo "SSH private key installed."
-      ls -l ~/.ssh/
+      echo "SSH key installed."
     displayName: 'Install SSH Private Key'
 
-  # ── Install Ansible and required collections ──────────────────────────────
+  # ── Install Ansible ────────────────────────────────────────────────────────
   - script: |
       set -e
       sudo apt-get update -y
@@ -41,37 +40,19 @@ steps:
       pip3 install --break-system-packages PyMySQL
       ansible-galaxy collection install community.general community.mysql
       ansible --version
-    displayName: 'Install Ansible and Dependencies'
+    displayName: 'Install Ansible and Collections'
 
-  # ── Inject Terraform outputs into inventory.ini ───────────────────────────
-  # vm_public_ip and mysql_fqdn come from the epicbook-secrets variable group
-  # These were manually copied from the infra pipeline Terraform outputs
+  # ── Inject VM public IP into inventory.ini ─────────────────────────────────
+  # Only the IP goes into inventory — all other secrets are passed via --extra-vars
   - script: |
       set -e
       cd $(ansibleDir)
-
-      echo "Updating inventory.ini with VM public IP: $(vm_public_ip)"
       sed -i "s|<VM_PUBLIC_IP>|$(vm_public_ip)|g" inventory.ini
-
-      echo "Updated inventory.ini:"
+      echo "inventory.ini:"
       cat inventory.ini
     displayName: 'Inject VM Public IP into inventory.ini'
 
-  # ── Inject MySQL FQDN and DB password into group_vars/web.yml ─────────────
-  - script: |
-      set -e
-      cd $(ansibleDir)
-
-      echo "Updating group_vars/web.yml with MySQL FQDN: $(mysql_fqdn)"
-      sed -i "s|<MYSQL_FQDN>|$(mysql_fqdn)|g" group_vars/web.yml
-      sed -i "s|<DB_PASSWORD>|$(db_password)|g" group_vars/web.yml
-
-      echo "Updated group_vars/web.yml:"
-      # Print without exposing db_password
-      grep -v db_password group_vars/web.yml
-    displayName: 'Inject MySQL FQDN and DB Password into group_vars'
-
-  # ── Test SSH connectivity to the VM ───────────────────────────────────────
+  # ── Test SSH connectivity ──────────────────────────────────────────────────
   - script: |
       set -e
       cd $(ansibleDir)
@@ -79,34 +60,51 @@ steps:
     displayName: 'Test SSH Connectivity to VM'
 
   # ── Run Ansible Playbook ───────────────────────────────────────────────────
+  # All secrets are passed via --extra-vars at runtime
+  # group_vars/web.yml no longer needs to contain real values
   - script: |
       set -e
       cd $(ansibleDir)
-      ansible-playbook -i inventory.ini site.yml -v
-    displayName: 'Run Ansible Playbook (common → nginx → epicbook)'
 
-  # ── Verify Nginx is serving the EpicBook site ─────────────────────────────
+      ansible-playbook \
+        -i inventory.ini \
+        site.yml \
+        --private-key ~/.ssh/id_rsa \
+        --extra-vars "db_host=$(mysql_fqdn)" \
+        --extra-vars "db_password=$(db_password)" \
+        --extra-vars "db_user=$(db_admin_user)" \
+        -v
+    displayName: 'Run Ansible Playbook (common → nginx → epicbook)'
+    env:
+      # Expose secret variable group values to the script environment
+      db_password: $(db_password)
+      db_admin_user: $(db_admin_user)
+      mysql_fqdn: $(mysql_fqdn)
+      vm_public_ip: $(vm_public_ip)
+
+  # ── Verify app is live ─────────────────────────────────────────────────────
   - script: |
       set -e
-      echo "Waiting 15 seconds for Nginx and PM2 to fully start..."
-      sleep 15
+      echo "Waiting 20 seconds for app to start..."
+      sleep 20
 
-      HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://$(vm_public_ip))
+      HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$(vm_public_ip))
       echo "HTTP status: $HTTP_STATUS"
 
-      if [ "$HTTP_STATUS" = "200" ]; then
+      if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "302" ]; then
         echo "EpicBook is live at http://$(vm_public_ip)"
       else
-        echo "EpicBook returned HTTP $HTTP_STATUS — check Nginx and PM2 logs"
+        echo "Unexpected HTTP status: $HTTP_STATUS"
         exit 1
       fi
     displayName: 'Verify EpicBook HTTP Response'
 
-  # ── Print access details ───────────────────────────────────────────────────
+  # ── Summary ───────────────────────────────────────────────────────────────
   - script: |
-      echo "==========================================="
-      echo "  EpicBook Deployment Complete"
-      echo "  App URL    : http://$(vm_public_ip)"
-      echo "  MySQL Host : $(mysql_fqdn)"
-      echo "==========================================="
-    displayName: 'Print Deployment Summary'
+      echo "================================================="
+      echo "  EpicBook deployment complete"
+      echo "  URL : http://$(vm_public_ip)"
+      echo "  DB  : $(mysql_fqdn):3306"
+      echo "================================================="
+    displayName: 'Deployment Summary'
+

@@ -8,11 +8,15 @@ app_group: "www-data"
 # ── Nginx ─────────────────────────────────────────────────────────────────────
 nginx_site_name: "epicbook"
 nginx_port:      80
-backend_port:    8080
 
-# ── Database — Azure MySQL Flexible Server ────────────────────────────────────
-# Update db_host with the value from Terraform output: mysql_fqdn
-db_host:     "<MYSQL_FQDN>"
+# ── Database — values injected at runtime via pipeline --extra-vars ───────────
+# Do NOT put real credentials here. The pipeline passes these via --extra-vars:
+#   db_host       from variable group: mysql_fqdn
+#   db_user       from variable group: db_admin_user
+#   db_password   from variable group: db_password  (secret)
+db_host:     "placeholder"
 db_name:     "bookstore"
-db_user:     "dbadmin@myapp-mysql-tsxt3v.mysql.database.azure.com"
-db_password: "<DB_PASSWORD>"      # injected by pipeline from variable group
+db_user:     "placeholder"
+db_password: "placeholder"
+db_port:     3306
+
