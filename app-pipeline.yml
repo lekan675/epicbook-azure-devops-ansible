@@ -4,7 +4,7 @@ trigger:
       - main
 
 pool:
-  name: 'SelfHostedPool'             # update to your agent pool name
+  name: 'epicbook-agent'             # update to your agent pool name
 
 variables:
   - group: epicbook-secrets          # variable group — must contain: db_password, vm_public_ip, mysql_fqdn
